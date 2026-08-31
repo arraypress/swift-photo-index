@@ -1,0 +1,42 @@
+{
+  "originHash" : "80bf1f2f28ed70594f56781260900f1b5afc9c0ee4aadb397937403722cd3e2d",
+  "pins" : [
+    {
+      "identity" : "argmax-oss-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/argmaxinc/argmax-oss-swift.git",
+      "state" : {
+        "revision" : "1e2a163736dfa5a198e637ae44c114e1c6d5cc2d",
+        "version" : "1.1.0"
+      }
+    },
+    {
+      "identity" : "fluidaudio",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/FluidInference/FluidAudio.git",
+      "state" : {
+        "revision" : "4dbf4f9f9a5ff3a53ade848d7ba4e3df13db859b",
+        "version" : "0.15.6"
+      }
+    },
+    {
+      "identity" : "swift-argument-parser",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-argument-parser.git",
+      "state" : {
+        "revision" : "6a52f3251125d74daf04fcbd5e6f08a75d074382",
+        "version" : "1.8.2"
+      }
+    },
+    {
+      "identity" : "swift-speech-transcriber",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/arraypress/swift-speech-transcriber.git",
+      "state" : {
+        "revision" : "c46ab9722a26d29445fd15e8a30e68e6c2d16d63",
+        "version" : "1.3.1"
+      }
+    }
+  ],
+  "version" : 3
+}
