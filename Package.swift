@@ -15,12 +15,19 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/arraypress/swift-speech-transcriber.git", from: "1.3.0"),
+        // The audit's checkers: Luhn and network tables for card-shaped
+        // numbers, and the secret-pattern catalogue for keys in screenshots.
+        // Both are small, pure Swift, and already the fleet's own.
+        .package(url: "https://github.com/arraypress/swift-credit-card-validator.git", from: "1.0.0"),
+        .package(url: "https://github.com/arraypress/swift-secret-scanner.git", from: "0.1.0"),
     ],
     targets: [
         .target(
             name: "PhotoIndex",
             dependencies: [
                 .product(name: "SpeechTranscriber", package: "swift-speech-transcriber"),
+                .product(name: "CreditCardValidator", package: "swift-credit-card-validator"),
+                .product(name: "SecretScanner", package: "swift-secret-scanner"),
             ]
         ),
         .testTarget(name: "PhotoIndexTests", dependencies: ["PhotoIndex"]),

@@ -316,4 +316,39 @@ final class PipelineTests: XCTestCase {
         XCTAssertEqual(hits.count, 1)
         XCTAssertTrue(hits.first?.matched.contains(.transcript) ?? false)
     }
+
+    // MARK: - Audit end to end
+
+    func testAuditFindsSeededCardAndPassport() async throws {
+        let corpus = try temporaryDirectory("audit-corpus")
+        let white = CGColor(red: 1, green: 1, blue: 1, alpha: 1)
+        try Self.drawImage(words: ["PAYMENT CARD", "4242 4242 4242 4242", "EXP 12/29"],
+                           background: white, to: corpus.appendingPathComponent("card.png"),
+                           width: 1200, height: 500)
+        try Self.drawImage(words: ["P<IRLSHERLOCK<<DAVID<MICHAEL<<<<<<<<<<<<<<<<",
+                                   "L898902C36IRL7408122F1204159<<<<<<<<<<<<<<08"],
+                           background: white, to: corpus.appendingPathComponent("passport.png"),
+                           width: 2400, height: 400)
+        let (store, report) = try await makeIndexed(corpus)
+        XCTAssertEqual(report.failures, [:])
+
+        let findings = try await Auditor(store: store).run(
+            options: .init(minimumSeverity: .low, scanDocuments: false))
+
+        let card = findings.first { $0.category == .card }
+        XCTAssertEqual(card?.excerpt, "••••4242")
+        XCTAssertEqual(card?.locator, corpus.appendingPathComponent("card.png").path)
+        XCTAssertEqual(card?.severity, .high)
+
+        let passport = findings.first { $0.category == .passport }
+        XCTAssertEqual(passport?.excerpt, "P<IRL•••")
+        XCTAssertEqual(passport?.locator, corpus.appendingPathComponent("passport.png").path)
+
+        // The leak test: no finding anywhere carries a seeded value.
+        for finding in findings {
+            XCTAssertFalse(finding.why.contains("4242 4242"), finding.why)
+            XCTAssertFalse((finding.excerpt ?? "").contains("4242424242424242"))
+            XCTAssertFalse((finding.excerpt ?? "").contains("L898902C3"))
+        }
+    }
 }

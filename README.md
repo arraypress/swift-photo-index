@@ -87,6 +87,41 @@ schema versioned with a migration path from day one.
 - macOS 26+ (the SpeechAnalyzer floor), Apple silicon
 - Swift 6
 
+
+## The audit
+
+`Auditor` runs a privacy scan over an existing index: what in this library
+would its owner regret syncing, sharing or leaving on a sold machine?
+
+Almost everything is a query over data the index already holds — OCR text,
+coordinates, faces — so the pass is fast (a 13-asset corpus audits in
+0.2 s). The rules, each pure and pinned by tests that never hold a real
+sensitive value:
+
+- **Cards** — 13–19 digit runs that pass Luhn, network-identified
+  (swift-credit-card-validator).
+- **Passport MRZ** — a 44-character TD3 line whose document, birth-date
+  and expiry check digits (ICAO 7-3-1) all validate. Three checksums do
+  not happen to OCR noise.
+- **IBAN** — cut to the country's registered length, confirmed by mod-97.
+- **Secrets** — swift-secret-scanner's concrete patterns over the OCR text
+  (API keys photographed in screenshots). Entropy rules stay off: OCR text
+  is exactly the noise they false-fire on.
+- **Home inference** — the densest ~100 m cell of the library's
+  coordinates is presumptively home; GPS within 100 m of it is the
+  highest-severity location finding.
+- **File passes** (folder assets only): serial numbers and owner names
+  read from image headers, and `RecognizeDocumentsRequest` on OCR-dense
+  images — a photographed document is a finding in itself.
+
+Every excerpt is masked at construction (`••••4242`, `P<IRL•••`); the
+matched value exists in no field, so a finding is safe to print anywhere.
+
+What it cannot do: nudity detection (SensitiveContentAnalysis is
+entitlement-gated away from command-line tools), text below the OCR floor,
+and file passes on Photos-library assets (they would need full image-data
+requests; index findings still apply).
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

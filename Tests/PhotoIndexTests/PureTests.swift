@@ -296,4 +296,73 @@ final class PureTests: XCTestCase {
                                  transcript: nil, people: "Alice")
         XCTAssertEqual(try engine.search("london").count, 1, "re-index kept the geocode")
     }
+
+    // MARK: - Audit rules
+
+    func testMRZCheckDigitsAndPassportDetection() {
+        // Minted TD3 second line: doc/dob/expiry check digits 6, 2, 9.
+        XCTAssertEqual(AuditRules.mrzCheckDigit("L898902C3"), 6)
+        XCTAssertEqual(AuditRules.mrzCheckDigit("740812"), 2)
+        XCTAssertEqual(AuditRules.mrzCheckDigit("120415"), 9)
+        XCTAssertNil(AuditRules.mrzCheckDigit("bad!"), "lowercase and punctuation are not MRZ")
+
+        let zone = "P<IRLSHERLOCK<<DAVID<MICHAEL<<<<<<<<<<<<<<<<\nL898902C36IRL7408122F1204159<<<<<<<<<<<<<<08"
+        XCTAssertEqual(AuditRules.passportFindings(in: zone), ["P<IRL•••"])
+        // OCR spacing inside the zone is tolerated; a corrupted check digit is not.
+        let spaced = zone.replacingOccurrences(of: "L898902C36", with: "L8989 02C36")
+        XCTAssertEqual(AuditRules.passportFindings(in: spaced), ["P<IRL•••"])
+        let corrupted = zone.replacingOccurrences(of: "L898902C36", with: "L898902C37")
+        XCTAssertTrue(AuditRules.passportFindings(in: corrupted).isEmpty)
+    }
+
+    func testIBANMod97() {
+        XCTAssertTrue(AuditRules.ibanIsValid("GB82WEST12345698765432"))
+        XCTAssertFalse(AuditRules.ibanIsValid("GB82WEST12345698765431"))
+        XCTAssertEqual(AuditRules.ibanFindings(in: "pay to GB82 WEST 1234 5698 7654 32 today"),
+                       ["GB82•••5432"])
+        XCTAssertTrue(AuditRules.ibanFindings(in: "GB82WEST12345698765431").isEmpty)
+    }
+
+    func testCardCandidatesAndMasking() {
+        // 4242… is the canonical Luhn-valid test card.
+        let text = "receipt 4242 4242 4242 4242 ref 12345678 2026-08-31"
+        let findings = AuditRules.cardFindings(in: text)
+        XCTAssertEqual(findings.count, 1)
+        XCTAssertEqual(findings[0].masked, "••••4242")
+        XCTAssertFalse(findings[0].masked.contains("4242 4242"), "the full number never survives")
+        // A Luhn-invalid sixteen digits is not a finding.
+        XCTAssertTrue(AuditRules.cardFindings(in: "4242 4242 4242 4241").isEmpty)
+        // Nineteen digits in one run parse; twenty digits are not a card.
+        XCTAssertEqual(AuditRules.cardCandidates(in: "12345678901234567890").count, 0)
+    }
+
+    func testContactAndSSNMasks() {
+        XCTAssertEqual(AuditRules.ssnFindings(in: "SSN 078-05-1120 on file"), ["•••-••-1120"])
+        XCTAssertEqual(AuditRules.emailFindings(in: "mail dave@example.com now"), ["d•••@example.com"])
+        XCTAssertEqual(AuditRules.phoneFindings(in: "call +353 87 123 4567 tonight"), ["+353•••"])
+        XCTAssertTrue(AuditRules.phoneFindings(in: "order 8712345670 shipped").isEmpty,
+                      "bare digit runs are not phones")
+    }
+
+    func testHomeClusterInference() {
+        // Ten sightings within ~40 m, three scattered across town.
+        var coords: [(lat: Double, lon: Double)] = []
+        for i in 0..<10 {
+            coords.append((53.3498 + Double(i) * 0.00003, -6.2603))
+        }
+        coords.append((53.40, -6.30))
+        coords.append((53.30, -6.20))
+        coords.append((53.35, -6.10))
+        let home = try! XCTUnwrap(AuditRules.homeCluster(coords))
+        XCTAssertEqual(home.lat, 53.34993, accuracy: 0.001)
+        XCTAssertLessThan(AuditRules.meters(from: coords[0], to: home), 100)
+        XCTAssertGreaterThan(AuditRules.meters(from: (53.40, -6.30), to: home), 5000)
+        // Too few sightings: no home is inferred at all.
+        XCTAssertNil(AuditRules.homeCluster(Array(coords.prefix(4))))
+    }
+
+    func testMaskKeepingSuffix() {
+        XCTAssertEqual(AuditRules.maskKeepingSuffix("4242424242424242"), "••••4242")
+        XCTAssertEqual(AuditRules.maskKeepingSuffix("abc"), "•••", "short values vanish entirely")
+    }
 }

@@ -1,5 +1,5 @@
 {
-  "originHash" : "80bf1f2f28ed70594f56781260900f1b5afc9c0ee4aadb397937403722cd3e2d",
+  "originHash" : "772bdee4888c006b0b3a745194d4bfc3dd75310102fb9a4880301d7b41886db7",
   "pins" : [
     {
       "identity" : "argmax-oss-swift",
@@ -26,6 +26,24 @@
       "state" : {
         "revision" : "6a52f3251125d74daf04fcbd5e6f08a75d074382",
         "version" : "1.8.2"
+      }
+    },
+    {
+      "identity" : "swift-credit-card-validator",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/arraypress/swift-credit-card-validator.git",
+      "state" : {
+        "revision" : "5fb71eafd4a29ef6e277b254efc9c11f4be574da",
+        "version" : "1.0.1"
+      }
+    },
+    {
+      "identity" : "swift-secret-scanner",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/arraypress/swift-secret-scanner.git",
+      "state" : {
+        "revision" : "66c91cfbbc344a3b556f04b2dc0f8d04cc19f512",
+        "version" : "0.1.1"
       }
     },
     {
