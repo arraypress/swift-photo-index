@@ -2,3 +2,6 @@
 .swiftpm/
 dist/
 .DS_Store
+
+# The Core AI export (725 MB) lives on Hugging Face, never in git.
+Tools/exports/

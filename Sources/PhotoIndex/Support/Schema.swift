@@ -15,7 +15,7 @@ import Foundation
 enum Schema {
 
     /// The version this build writes.
-    static let version = 1
+    static let version = 2
 
     /// Everything a fresh index contains.
     static let creation: [String] = [
@@ -84,11 +84,24 @@ enum Schema {
         // The searchable text. rowid is the asset id, maintained by the store —
         // contentless FTS would forbid the delete-then-reinsert the updater uses.
         "CREATE VIRTUAL TABLE content USING fts5(ocr, labels, transcript, people, place)",
+    ] + embeddingsTable
+
+    /// The semantic vectors (schema 2): one per asset, float16, tagged with
+    /// the model that made them so a different model re-embeds, never mixes.
+    static let embeddingsTable: [String] = [
+        """
+        CREATE TABLE embeddings(
+            asset_id INTEGER PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,
+            model    TEXT NOT NULL,
+            data     BLOB NOT NULL
+        )
+        """,
     ]
 
-    /// Step migrations, keyed by the version they upgrade FROM. Empty today;
-    /// the walk below already runs them in order when they exist.
-    static let migrations: [Int: [String]] = [:]
+    /// Step migrations, keyed by the version they upgrade FROM.
+    static let migrations: [Int: [String]] = [
+        1: embeddingsTable,
+    ]
 
     /// Opens the schema: creates it fresh, walks it forward, or refuses a
     /// database written by a newer build — silently misreading one would

@@ -14,6 +14,8 @@ public struct IndexReport: Sendable, Codable {
     public var removed: Int = 0
     public var unchanged: Int = 0
     public var transcribed: Int = 0
+    /// Assets given a semantic vector this run, new or backfilled.
+    public var embedded: Int = 0
     /// Locator → message, for assets that failed without sinking the run.
     public var failures: [String: String] = [:]
     /// Wall seconds spent, whole run.
@@ -31,6 +33,8 @@ public struct IndexStatus: Sendable, Codable {
     public let sourceCounts: [String: Int]       // source → count
     public let labelled: Int
     public let withPrints: Int
+    /// Assets carrying a semantic vector (any model).
+    public let withEmbeddings: Int
     public let withTranscripts: Int
     public let faces: Int
     public let clusters: Int
@@ -40,13 +44,14 @@ public struct IndexStatus: Sendable, Codable {
 
     public init(
         assetCounts: [String: Int], sourceCounts: [String: Int], labelled: Int,
-        withPrints: Int, withTranscripts: Int, faces: Int, clusters: Int,
+        withPrints: Int, withEmbeddings: Int = 0, withTranscripts: Int, faces: Int, clusters: Int,
         namedClusters: Int, databaseBytes: Int64, databasePath: String
     ) {
         self.assetCounts = assetCounts
         self.sourceCounts = sourceCounts
         self.labelled = labelled
         self.withPrints = withPrints
+        self.withEmbeddings = withEmbeddings
         self.withTranscripts = withTranscripts
         self.faces = faces
         self.clusters = clusters

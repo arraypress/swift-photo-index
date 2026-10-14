@@ -269,6 +269,49 @@ public final class IndexStore {
         }
     }
 
+    // MARK: - Semantic embeddings
+
+    func upsertEmbedding(assetID: Int64, model: String, _ floats: [Float]) throws {
+        try db.run("""
+            INSERT INTO embeddings(asset_id, model, data) VALUES(?,?,?)
+            ON CONFLICT(asset_id) DO UPDATE SET model=excluded.model, data=excluded.data
+            """, [.int(assetID), .text(model), .blob(Vectors.halfData(from: floats))])
+    }
+
+    func embedding(forAssetID id: Int64, model: String) throws -> [Float]? {
+        try db.query("SELECT data FROM embeddings WHERE asset_id=? AND model=?", [.int(id), .text(model)])
+            .first?.blob(0).map(Vectors.floats(fromHalf:))
+    }
+
+    /// Every asset's cosine to a unit query, scored straight off the blobs.
+    func similarities(to query: [Float], model: String) throws -> [(assetID: Int64, similarity: Float)] {
+        let rows = try db.query("SELECT asset_id, data FROM embeddings WHERE model=?", [.text(model)])
+            .compactMap { row -> (Int64, Data)? in
+                guard let id = row.int(0), let blob = row.blob(1) else { return nil }
+                return (id, blob)
+            }
+        return zip(rows.map(\.0), Vectors.dots(query, halves: rows.map(\.1))).map { ($0, $1) }
+    }
+
+    /// How many assets carry a vector from `model` — zero means a search need not load it.
+    public func embeddingCount(model: String) throws -> Int {
+        Int(try db.query("SELECT COUNT(*) FROM embeddings WHERE model=?", [.text(model)]).first?.int(0) ?? 0)
+    }
+
+    /// Images and videos of a source with no vector from `model` yet — indexed before the
+    /// semantic model existed, or by another model.
+    func assetsNeedingEmbedding(source: SourceKind, model: String) throws -> [(id: Int64, locator: String)] {
+        try db.query("""
+            SELECT a.id, a.locator FROM assets a
+            LEFT JOIN embeddings e ON e.asset_id = a.id AND e.model = ?
+            WHERE a.source = ? AND e.asset_id IS NULL
+            """, [.text(model), .text(source.rawValue)]
+        ).compactMap { row in
+            guard let id = row.int(0), let locator = row.text(1) else { return nil }
+            return (id, locator)
+        }
+    }
+
     // MARK: - Faces and clusters
 
     /// Replaces an asset's faces with freshly assigned ones.
@@ -441,6 +484,23 @@ public final class IndexStore {
         }
     }
 
+    /// Folder assets whose path holds every token somewhere — a LIKE
+    /// prefilter, unlimited because a folder's name can match every row; the
+    /// caller checks the file name word by word.
+    func locatorCandidates(tokens: [String]) throws -> [(id: Int64, locator: String)] {
+        guard !tokens.isEmpty else { return [] }
+        let clauses = Array(repeating: "locator LIKE ? ESCAPE '\\'", count: tokens.count).joined(separator: " AND ")
+        let binds: [Database.Value] = tokens.map { token in
+            let escaped = token.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "%", with: "\\%").replacingOccurrences(of: "_", with: "\\_")
+            return .text("%\(escaped)%")
+        }
+        return try db.query("SELECT id, locator FROM assets WHERE source='folder' AND \(clauses)", binds).compactMap { row in
+            guard let id = row.int(0), let locator = row.text(1) else { return nil }
+            return (id, locator)
+        }
+    }
+
     /// Folder videos still lacking a transcript, for a later --audio pass.
     func videosNeedingTranscript(source: SourceKind) throws -> [(id: Int64, locator: String)] {
         try db.query(
@@ -539,6 +599,7 @@ public final class IndexStore {
             sourceCounts: try counts("SELECT source, COUNT(*) FROM assets GROUP BY source"),
             labelled: try single("SELECT COUNT(DISTINCT asset_id) FROM labels"),
             withPrints: try single("SELECT COUNT(*) FROM prints"),
+            withEmbeddings: try single("SELECT COUNT(*) FROM embeddings"),
             withTranscripts: try single("SELECT COUNT(*) FROM assets WHERE has_transcript=1"),
             faces: try single("SELECT COUNT(*) FROM faces"),
             clusters: try single("SELECT COUNT(DISTINCT cluster_id) FROM faces WHERE cluster_id IS NOT NULL"),

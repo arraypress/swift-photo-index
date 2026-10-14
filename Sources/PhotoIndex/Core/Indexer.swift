@@ -10,6 +10,7 @@
 //  dies on photo 19,997 has wasted an afternoon.
 //
 
+import CoreGraphics
 import Foundation
 import SpeechTranscriber
 
@@ -22,6 +23,9 @@ public final class Indexer {
         public var includeAudio = false
         /// The face-cluster join distance; the default is calibrated.
         public var faceThreshold: Float = Clustering.defaultThreshold
+        /// Gives every image and video a semantic vector — new ones as they are
+        /// indexed, older ones (indexed before, or by another model) backfilled.
+        public var embedder: SemanticEmbedder?
 
         public init() {}
     }
@@ -42,7 +46,9 @@ public final class Indexer {
         var report = IndexReport()
 
         let descriptors = try await source.descriptors()
-        let stored = try store.fingerprints(source: source.kind)
+        // Only what this source walks: a folder indexed on another run is
+        // not "removed" because this run walked a different one.
+        let stored = try store.fingerprints(source: source.kind).filter { source.covers($0.key) }
         let diff = IncrementalDiff.diff(current: descriptors, stored: stored)
 
         report.unchanged = diff.unchangedLocators.count
@@ -55,10 +61,11 @@ public final class Indexer {
             progress?(descriptor.locator)
             do {
                 let loaded = try await source.load(descriptor)
-                let transcribed = try await process(loaded, source: source.kind,
-                                                   options: options, seeds: &seeds)
+                let done = try await process(loaded, source: source.kind,
+                                             options: options, seeds: &seeds)
                 if isNew { report.added += 1 } else { report.updated += 1 }
-                if transcribed { report.transcribed += 1 }
+                if done.transcribed { report.transcribed += 1 }
+                if done.embedded { report.embedded += 1 }
             } catch {
                 report.failures[descriptor.locator] = String(describing: error)
             }
@@ -85,18 +92,61 @@ public final class Indexer {
             }
         }
 
+        // Assets indexed before there was a semantic model (or by another
+        // one): give them a vector without re-running the other extractors.
+        // Only what this walk saw unchanged — new and changed ones were just
+        // embedded, and another folder's assets wait for their own run (its
+        // drive may not even be plugged in). Each vector is written as it is
+        // made, so an interrupted run resumes.
+        if let embedder = options.embedder {
+            let seen = Set(diff.unchangedLocators)
+            for entry in try store.assetsNeedingEmbedding(source: source.kind, model: SemanticEmbedder.modelID)
+            where seen.contains(entry.locator) {
+                progress?(entry.locator)
+                do {
+                    let loaded = try await source.load(AssetDescriptor(locator: entry.locator, fingerprint: ""))
+                    if let vector = try await embedding(of: loaded, embedder: embedder) {
+                        try store.upsertEmbedding(assetID: entry.id, model: SemanticEmbedder.modelID, vector)
+                        report.embedded += 1
+                    }
+                } catch {
+                    report.failures[entry.locator] = String(describing: error)
+                }
+            }
+        }
+
         report.seconds = Date().timeIntervalSince(start)
         return report
     }
 
     // MARK: - One asset
 
+    /// The semantic vector of a loaded asset: the picture's, or for a video the
+    /// mean of its sampled frames' (one frame cannot speak for a whole clip).
+    private func embedding(of loaded: LoadedAsset, embedder: SemanticEmbedder,
+                           frames: [CGImage]? = nil) async throws -> [Float]? {
+        if loaded.media == .image, let image = loaded.cgImage {
+            return try await embedder.embed(image: image)
+        }
+        if loaded.media == .video {
+            var images = frames ?? []
+            if frames == nil, let url = loaded.videoFileURL {
+                images = try await VideoSampling.frames(from: url).frames.map(\.image)
+            }
+            var vectors: [[Float]] = []
+            for image in images { vectors.append(try await embedder.embed(image: image)) }
+            return Vectors.meanUnit(vectors)
+        }
+        return nil
+    }
+
     /// Extracts and stores one loaded asset. Returns whether audio was
-    /// transcribed.
+    /// transcribed and whether a semantic vector was stored.
     private func process(
         _ loaded: LoadedAsset, source: SourceKind,
         options: Options, seeds: inout [ClusterSeed]
-    ) async throws -> Bool {
+    ) async throws -> (transcribed: Bool, embedded: Bool) {
+        var frames: [CGImage] = []
         var content = ExtractedContent()
         var duration = Double?.none
 
@@ -108,6 +158,7 @@ public final class Indexer {
         } else if loaded.media == .video, let url = loaded.videoFileURL {
             let sampled = try await VideoSampling.frames(from: url)
             duration = sampled.duration
+            frames = sampled.frames.map(\.image)
             var lines: Set<String> = []
             var bestLabels: [String: Double] = [:]
             for (offset, frame) in sampled.frames.enumerated() {
@@ -174,6 +225,13 @@ public final class Indexer {
         let namesHere = Set(assigned.map(\.clusterID))
         let people = named.filter { namesHere.contains($0.id) }.map(\.name).sorted()
 
+        var embedded = false
+        if let embedder = options.embedder,
+           let vector = try await embedding(of: loaded, embedder: embedder, frames: loaded.media == .video ? frames : nil) {
+            try store.upsertEmbedding(assetID: assetID, model: SemanticEmbedder.modelID, vector)
+            embedded = true
+        }
+
         try store.replaceLabels(assetID: assetID, content.labels)
         if let print = content.featurePrint, !print.isEmpty {
             try store.upsertPrint(assetID: assetID, print)
@@ -189,7 +247,7 @@ public final class Indexer {
             transcript: content.transcript,
             people: people.joined(separator: " ")
         )
-        return content.transcript != nil
+        return (content.transcript != nil, embedded)
     }
 
     /// The spoken words of a video, or nil when it simply has no audio.

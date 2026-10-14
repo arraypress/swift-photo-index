@@ -1,0 +1,18 @@
+{
+ "model": "google/siglip2-base-patch16-224",
+ "revision": "75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2",
+ "dimension": 768,
+ "image_size": 224,
+ "mean": 0.5,
+ "std": 0.5,
+ "text_length": 64,
+ "pad": 0,
+ "eos": 1,
+ "unk": 3,
+ "lowercase": true,
+ "space": "▁",
+ "entry_points": {
+  "image": "pixel_values",
+  "text": "ids"
+ }
+}

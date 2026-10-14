@@ -142,6 +142,27 @@ final class PipelineTests: XCTestCase {
         XCTAssertEqual(try engine.search("sourdough").count, 0)
     }
 
+    func testIndexingOneFolderKeepsAnother() async throws {
+        let first = try temporaryDirectory("first")
+        let second = try temporaryDirectory("second")
+        let white = CGColor(red: 1, green: 1, blue: 1, alpha: 1)
+        try Self.drawImage(words: ["HARBOUR"], background: white, to: first.appendingPathComponent("a.png"))
+        try Self.drawImage(words: ["MEADOW"], background: white, to: second.appendingPathComponent("b.png"))
+        let store = try IndexStore(directory: temporaryDirectory("store"))
+
+        _ = try await Indexer(store: store).index(source: FolderSource(paths: [first.path]))
+        let other = try await Indexer(store: store).index(source: FolderSource(paths: [second.path]))
+        XCTAssertEqual(other.removed, 0, "walking B judges only B")
+        let engine = SearchEngine(store: store)
+        XCTAssertEqual(try engine.search("harbour").count, 1, "A is still indexed")
+        XCTAssertEqual(try engine.search("meadow").count, 1)
+
+        try FileManager.default.removeItem(at: second.appendingPathComponent("b.png"))
+        let again = try await Indexer(store: store).index(source: FolderSource(paths: [second.path]))
+        XCTAssertEqual(again.removed, 1, "a file gone from the walked folder is still forgotten")
+        XCTAssertEqual(try engine.search("harbour").count, 1)
+    }
+
     func testSimilarAndPerceptualDupes() async throws {
         let corpus = try temporaryDirectory("corpus")
         try makeCorpus(in: corpus)

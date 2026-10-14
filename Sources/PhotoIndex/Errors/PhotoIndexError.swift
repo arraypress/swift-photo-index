@@ -24,12 +24,16 @@ public enum PhotoIndexError: Error, Sendable, LocalizedError {
     /// image, an unknown cluster.
     case input(String)
 
+    /// The semantic model is missing, incomplete or failed to run.
+    case model(String)
+
     public var errorDescription: String? {
         switch self {
         case .storage(let message): return "index store: \(message)"
         case .extraction(let message): return "extraction: \(message)"
         case .photosAccess(let message): return message
         case .input(let message): return message
+        case .model(let message): return "semantic model: \(message)"
         }
     }
 }

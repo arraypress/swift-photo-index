@@ -19,6 +19,10 @@ public struct SearchResult: Sendable, Equatable, Codable {
         case transcript
         case people
         case place
+        /// Every query word is in the file's name.
+        case filename
+        /// Matched by meaning: the picture is close to the query in the semantic model's space.
+        case meaning
     }
 
     public let asset: IndexedAsset
@@ -32,10 +36,15 @@ public struct SearchResult: Sendable, Equatable, Codable {
     /// A short excerpt of the matched text, where there is one.
     public let snippet: String?
 
-    public init(asset: IndexedAsset, score: Double, matched: [MatchedField], snippet: String? = nil) {
+    /// Cosine similarity to the query in the semantic model's space, when it was asked.
+    public let similarity: Float?
+
+    public init(asset: IndexedAsset, score: Double, matched: [MatchedField], snippet: String? = nil,
+                similarity: Float? = nil) {
         self.asset = asset
         self.score = score
         self.matched = matched
         self.snippet = snippet
+        self.similarity = similarity
     }
 }

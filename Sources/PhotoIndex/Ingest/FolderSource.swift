@@ -38,6 +38,14 @@ public final class FolderSource: AssetSource {
         self.roots = paths.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath).standardizedFileURL }
     }
 
+    /// The walked roots themselves and everything below them.
+    public func covers(_ locator: String) -> Bool {
+        roots.contains { root in
+            let path = root.path
+            return locator == path || locator.hasPrefix(path.hasSuffix("/") ? path : path + "/")
+        }
+    }
+
     public func descriptors() async throws -> [AssetDescriptor] {
         let manager = FileManager.default
         var found: [AssetDescriptor] = []

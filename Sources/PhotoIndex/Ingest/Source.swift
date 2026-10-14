@@ -101,4 +101,14 @@ public protocol AssetSource {
 
     /// One asset, loaded for extraction.
     func load(_ descriptor: AssetDescriptor) async throws -> LoadedAsset
+
+    /// Whether a stored locator lies inside what this source walks. Only
+    /// those can be judged missing: indexing one folder must not forget
+    /// another folder indexed earlier.
+    func covers(_ locator: String) -> Bool
+}
+
+extension AssetSource {
+    /// A source that sees everything of its kind (the Photos library).
+    public func covers(_ locator: String) -> Bool { true }
 }

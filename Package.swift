@@ -6,9 +6,9 @@ import PackageDescription
 let package = Package(
     name: "swift-photo-index",
     platforms: [
-        // The floor is set by swift-speech-transcriber (SpeechAnalyzer), which
-        // the --audio path rides. Everything else here runs on far older systems.
-        .macOS(.v26)
+        // macOS 27 for Core AI, which runs the semantic model (SigLIP 2).
+        // swift-speech-transcriber (SpeechAnalyzer, the --audio path) needs 26.
+        .macOS("27.0")
     ],
     products: [
         .library(name: "PhotoIndex", targets: ["PhotoIndex"]),
@@ -30,7 +30,7 @@ let package = Package(
                 .product(name: "SecretScanner", package: "swift-secret-scanner"),
             ]
         ),
-        .testTarget(name: "PhotoIndexTests", dependencies: ["PhotoIndex"]),
+        .testTarget(name: "PhotoIndexTests", dependencies: ["PhotoIndex"], resources: [.copy("Fixtures")]),
     ]
 )
 

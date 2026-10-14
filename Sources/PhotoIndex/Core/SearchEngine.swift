@@ -45,10 +45,18 @@ public struct SearchEngine {
     // MARK: - Text search
 
     /// Searches text, labels, places and named people in one query,
-    /// optionally windowed by capture date.
+    /// optionally windowed by capture date — and by meaning, when the query's
+    /// semantic vector is given (``SemanticEmbedder/embed(text:)``).
+    ///
+    /// - Parameters:
+    ///   - queryVector: The query embedded by the semantic model. Nil keeps the
+    ///     text-only ranking exactly as it was.
+    ///   - minimumSimilarity: Pictures matching by meaning alone must reach this cosine.
     public func search(
         _ query: String, kind: MediaKind? = nil,
-        from: Date? = nil, to: Date? = nil, limit: Int = 20
+        from: Date? = nil, to: Date? = nil, limit: Int = 20,
+        queryVector: [Float]? = nil,
+        minimumSimilarity: Float = SemanticEmbedder.defaultMinimumSimilarity
     ) throws -> [SearchResult] {
         let named = try store.namedClusters()
         let plan = QueryPlan.plan(query: query, namedClusters: named)
@@ -58,24 +66,37 @@ public struct SearchEngine {
         }
 
         // A query that is only people: that person's assets, newest first.
+        // Meaning has nothing to add to a name.
         guard let match = FTSQuery.matchExpression(plan.ftsTokens) else {
             return try store.assetsHavingClusters(plan.personClusters, kind: kind, limit: limit)
                 .filter { Self.within($0.created, from: from, to: to) }
                 .map { SearchResult(asset: $0, score: 1, matched: [.people]) }
         }
 
-        let candidates = try store.ftsCandidates(match: match, limit: max(64, limit * 4))
-        var results: [SearchResult] = []
+        struct Candidate {
+            let asset: IndexedAsset
+            var textScore: Double?
+            var matched: [SearchResult.MatchedField] = []
+            var snippet: String?
+            /// Every query word was found literally (pixels, speech, place, name), not guessed.
+            var literal = false
+            var similarity: Float?
+        }
+        var candidates: [Int64: Candidate] = [:]
+        let pool = max(64, limit * 4)
 
-        for row in candidates {
-            guard let asset = try store.asset(byID: row.assetID) else { continue }
-            if let kind, asset.kind != kind { continue }
-            if !Self.within(asset.created, from: from, to: to) { continue }
+        func admissible(_ asset: IndexedAsset) throws -> Bool {
+            if let kind, asset.kind != kind { return false }
+            if !Self.within(asset.created, from: from, to: to) { return false }
             if !plan.personClusters.isEmpty {
-                let present = try store.clusterIDs(forAssetID: row.assetID)
-                guard plan.personClusters.allSatisfy(present.contains) else { continue }
+                let present = try store.clusterIDs(forAssetID: asset.id)
+                guard plan.personClusters.allSatisfy(present.contains) else { return false }
             }
+            return true
+        }
 
+        for row in try store.ftsCandidates(match: match, limit: pool) {
+            guard let asset = try store.asset(byID: row.assetID), try admissible(asset) else { continue }
             let labelConfidence = try store.matchedLabelConfidence(
                 assetID: row.assetID, tokens: plan.ftsTokens)
             let score = Ranking.score(RankInput(
@@ -88,11 +109,60 @@ public struct SearchEngine {
                 transcript: row.transcript, people: row.people, place: row.place)
             let snippet = Provenance.snippet(tokens: plan.ftsTokens, in: row.ocr)
                 ?? Provenance.snippet(tokens: plan.ftsTokens, in: row.transcript)
-
-            results.append(SearchResult(asset: asset, score: score, matched: matched, snippet: snippet))
+            let literal = Provenance.coversLiterally(
+                tokens: plan.ftsTokens,
+                texts: [row.ocr, row.transcript, row.people, row.place, Provenance.fileName(of: asset)])
+            candidates[row.assetID] = Candidate(asset: asset, textScore: score, matched: matched,
+                                                snippet: snippet, literal: literal)
         }
 
-        return results.sorted { $0.score > $1.score }.prefix(limit).map { $0 }
+        // The file's own name: every query word in it, as whole words —
+        // "IMG_4021" answers "4021", a scan named "invoice 4021.pdf" answers both.
+        let byName = try store.locatorCandidates(tokens: plan.ftsTokens)
+            .filter { Provenance.fileNameHolds(tokens: plan.ftsTokens, locator: $0.locator) }
+        for entry in byName.prefix(pool) {
+            if candidates[entry.id] != nil {
+                candidates[entry.id]?.matched.append(.filename)
+                candidates[entry.id]?.textScore? += Ranking.fileNameScore
+                candidates[entry.id]?.literal = true
+                continue
+            }
+            guard let asset = try store.asset(byID: entry.id), try admissible(asset) else { continue }
+            candidates[entry.id] = Candidate(asset: asset, textScore: Ranking.fileNameScore,
+                                             matched: [.filename], literal: true)
+        }
+
+        guard let queryVector else {
+            return candidates.values
+                .map { SearchResult(asset: $0.asset, score: $0.textScore ?? 0, matched: $0.matched, snippet: $0.snippet) }
+                .sorted { $0.score > $1.score }.prefix(limit).map { $0 }
+        }
+
+        // Meaning: every stored vector against the query; the best that clear
+        // the bar (and the filters) join the text hits, which get theirs too.
+        let scored = try store.similarities(to: queryVector, model: SemanticEmbedder.modelID)
+            .map { (id: $0.assetID, similarity: $0.similarity) }
+        var joined = 0
+        for entry in scored.sorted(by: { $0.similarity > $1.similarity }) {
+            if candidates[entry.id] != nil {
+                candidates[entry.id]?.similarity = entry.similarity
+                continue
+            }
+            guard entry.similarity >= minimumSimilarity, joined < pool,
+                  let asset = try store.asset(byID: entry.id), try admissible(asset) else { continue }
+            candidates[entry.id] = Candidate(asset: asset, similarity: entry.similarity)
+            joined += 1
+        }
+
+        return candidates.values.map { candidate in
+            var matched = candidate.matched
+            if let similarity = candidate.similarity, similarity >= minimumSimilarity { matched.append(.meaning) }
+            let score = Ranking.blended(textScore: candidate.textScore, literal: candidate.literal,
+                                        similarity: candidate.similarity)
+            return SearchResult(asset: candidate.asset, score: score, matched: matched,
+                                snippet: candidate.snippet, similarity: candidate.similarity)
+        }
+        .sorted { $0.score > $1.score }.prefix(limit).map { $0 }
     }
 
     /// Whether a capture date sits inside the asked window. A dateless
@@ -135,6 +205,34 @@ public struct SearchEngine {
                 try store.asset(byID: entry.id).map {
                     SimilarResult(asset: $0, distance: entry.distance)
                 }
+            }
+    }
+
+    /// Assets closest in meaning to the given one — an indexed locator, or any image file
+    /// on disk (embedded with `embedder`).
+    public func similarByMeaning(to reference: String, limit: Int = 10,
+                                 embedder: SemanticEmbedder) async throws -> [SimilarResult] {
+        let referenceVector: [Float]
+        var excludeID: Int64?
+        if let asset = try store.asset(byLocator: standardised(reference)),
+           let stored = try store.embedding(forAssetID: asset.id, model: SemanticEmbedder.modelID) {
+            referenceVector = stored
+            excludeID = asset.id
+        } else {
+            let url = URL(fileURLWithPath: (reference as NSString).expandingTildeInPath)
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                throw PhotoIndexError.input("not in the index and not a file: \(reference)")
+            }
+            referenceVector = try await embedder.embed(image: Self.decode(url))
+        }
+        // Reported as a distance like the look-alike path: 1 − cosine.
+        return try store.similarities(to: referenceVector, model: SemanticEmbedder.modelID)
+            .filter { $0.assetID != excludeID }
+            .map { (id: $0.assetID, distance: 1 - $0.similarity) }
+            .sorted { $0.distance < $1.distance }
+            .prefix(limit)
+            .compactMap { entry in
+                try store.asset(byID: entry.id).map { SimilarResult(asset: $0, distance: entry.distance) }
             }
     }
 
